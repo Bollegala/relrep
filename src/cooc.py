@@ -146,7 +146,21 @@ class COOC:
         print "Total no. of patterns after filtering =", count
         patterns_file.close()
         pass
+    pass
 
+
+def conv_corpus():
+    """
+    Convert all words into lower case. This is what is being used by word2vec 
+    """
+    import string
+    table = string.maketrans("", "")
+    input_file = open("../work/ukwac.corp.mixed-case")
+    output_file = open("../work/ukwac.corp", "w")
+    for line in input_file:
+        output_file.write(line.lower().translate(table, string.punctuation))
+    input_file.close()
+    output_file.close()
     pass
 
 
@@ -164,7 +178,8 @@ def process():
 
 
 if __name__ == "__main__":
-    process()
+    conv_corpus()
+    #process()
 
 
 
