@@ -128,6 +128,40 @@ def normalize(x):
     return x if norm_x == 0 else (x / norm_x)
 
 
+def eval_SemEval(vects, method):
+    """
+    Answer SemEval questions. 
+    """
+    from semeval import SemEval
+    S = SemEval("../data/benchmarks/semeval")
+    total_accuracy = 0
+    for Q in S.data:
+        scores = []
+        for (first, second) in Q["wpairs"]:
+            val = 0
+            for (p_first, p_second) in Q["paradigms"]:
+                if (first in vects) and (second in vects) and (p_first in vects) and (p_second in vects):
+                    #print first, second, p_first, p_second
+                    va = vects[first]
+                    vb = vects[second]
+                    vc = vects[p_first]
+                    vd = vects[p_second]
+                    val += scoring_formula(va, vb, vc, vd, method)
+            val /= float(len(Q["paradigms"]))
+            scores.append(((first, second), val))
+        # sort the scores and write to a file. 
+        scores.sort(lambda x, y: -1 if x[1] > y[1] else 1)
+        score_fname = "../work/semeval/%s.txt" % Q["filename"]
+        score_file = open(score_fname, 'w')
+        for ((first, second), score) in scores:
+            score_file.write('%f "%s:%s"\n' % (score, first, second))
+        score_file.close()
+        total_accuracy += S.get_accuracy(score_fname, Q["filename"])
+    acc = total_accuracy / float(len(S.data))
+    print "SemEval Accuracy =", acc
+    return {"acc": acc}
+
+
 def eval_SAT_Analogies(vects, method):
     """
     Solve SAT word analogy questions using the vectors. 
@@ -288,15 +322,15 @@ def scoring_formula(va, vb, vc, vd, method):
     """
     Call different scoring formulas. 
     """
-    if method == "subt_cos":
+    if method == "CosSub":
         return subt_cos(va, vb, vc, vd)
-    elif method == "PairDirection":
+    elif method == "PairDiff":
         return PairDirection(va, vb, vc, vd)
-    elif method == "mult_cos":
+    elif method == "CosMult":
         return mult_cos(va, vb, vc, vd)
-    elif method == "add_cos":
+    elif method == "CosAdd":
         return add_cos(va, vb, vc, vd)
-    elif method == "domain_funct":
+    elif method == "DomFunc":
         return domain_funct(va, vb, vc, vd)
     else:
         raise ValueError
@@ -346,6 +380,7 @@ def PairDirection(va, vb, vc, vd):
     return cosine(normalize(vd - vc), normalize(vb - va))
 ####################################################################################
 
+
 def process():
     method = "add_cos"
     #eval_word2vec(method)
@@ -353,5 +388,58 @@ def process():
     pass
 
 
+def batch_process_glove():
+    res_file = open("../work/glove_batch.csv", 'w')
+    res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
+    methods = ["CosAdd", "CosMult", "CosSub", "PairDiff", "DomFunc"]
+    settings = [("../data/word-vects/glove.42B.300d.txt", 300), ("../data/word-vects/glove.840B.300d.txt", 300)]
+    for (model, dim) in settings:
+        WR = WordReps()
+        WR.read_model(model, dim)
+        for method in methods:
+            print model, dim, method
+            res_file.write("%s+%s, " % (model, method))
+            res_file.flush()
+            Google_res = eval_Google_Analogies(WR.vects, "../work/Google.csv", method)
+            res_file.write("%f, %f, %f, " % (Google_res["semantic"], Google_res["syntactic"], Google_res["total"]))
+            res_file.flush()
+            SAT_res = eval_SAT_Analogies(WR.vects, method)
+            res_file.write("%f, " % SAT_res["acc"])
+            res_file.flush()
+            SemEval_res = eval_SemEval(WR.vects, method)
+            res_file.write("%f\n" % SemEval_res["acc"])
+            res_file.flush()
+    res_file.close()
+    pass
+
+
+def batch_process_w2v():
+    res_file = open("../work/w2v_batch.csv", 'w')
+    res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
+    methods = ["CosAdd", "CosMult", "CosSub", "PairDiff", "DomFunc"]
+    settings = [("../data/word-vects/skip-100.bin", 100), ("../data/word-vects/skip-200.bin", 200),
+            ("../data/word-vects/skip-300.bin", 300), ("../data/word-vects/w2v.neg.300d.bin", 300)]
+    for (model, dim) in settings:
+        WR = WordReps()
+        WR.read_w2v_model(model, dim)
+        for method in methods:
+            print model, dim, method
+            res_file.write("%s+%s, " % (model, method))
+            res_file.flush()
+            Google_res = eval_Google_Analogies(WR.vects, "../work/Google.csv", method)
+            res_file.write("%f, %f, %f, " % (Google_res["semantic"], Google_res["syntactic"], Google_res["total"]))
+            res_file.flush()
+            SAT_res = eval_SAT_Analogies(WR.vects, method)
+            res_file.write("%f, " % SAT_res["acc"])
+            res_file.flush()
+            SemEval_res = eval_SemEval(WR.vects, method)
+            res_file.write("%f\n" % SemEval_res["acc"])
+            res_file.flush()
+    res_file.close()
+    pass
+
+
 if __name__ == "__main__":
-    process()
+    #process()
+    batch_process_w2v()
+    batch_process_glove()

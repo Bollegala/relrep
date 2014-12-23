@@ -27,7 +27,7 @@
 4, d, CONTRAST, Directional, front:back, left:right,east:west, before:after, inside:outside
 4, e, CONTRAST, Incompatible, happy:morbid, vigilant:careless, slow:stationary
 4, f, CONTRAST, Asymmetric Contrary, hot:cool, destitute:rich, tiny:large, dry:moist
-4, g, CONTRAST, Pseudoantonym, popular:shy. right:bad, believe:deny
+4, g, CONTRAST, Pseudoantonym, popular:shy, right:bad, believe:deny
 4, h, CONTRAST, Defective, fallacy:logic, astigmatism:sight, limp:walk
 5, a, ATTRIBUTE, ItemAttribute(noun:adjective), beggar:poor, glass:fragile, hero:brave
 5, b, ATTRIBUTE, Object Attribute:Condition, brittle:broken, malleable:molded, edible:eaten
@@ -36,7 +36,7 @@
 5, e, ATTRIBUTE, Object:Typical Action (noun.verb), glass:break, soldier:fight, juggernaut:crush
 5, f, ATTRIBUTE, Agent/ObjectAttribute:Typical Action, viable:live, salient:notice, brittle:break
 5, g, ATTRIBUTE, Action:Action Attribute, creep:slow, exercise:vigorous, longing:passionate
-5, h, ATTRIBUTE, Action:Object Attribute, sterilize:infectious. capture:elusive, drink:potable
+5, h, ATTRIBUTE, Action:Object Attribute, sterilize:infectious, capture:elusive, drink:potable
 5, i, ATTRIBUTE, Action:Resultant Attribute (verb:noun/adjective), rain:wet, riddle:holes,homogenize:uniform
 6, a, NON-ATTRIBUTE, Item:Nonattribute (noun:adjective), harmony:discordant, bulwark: flimsy, sound:inaudible
 6, b, NON-ATTRIBUTE, ObjectAttribute:Noncondition (adjective:adjective), brittle:molded, inconsolable:comforted, exemplary:criticized
@@ -57,9 +57,9 @@
 8, a, CAUSE-PURPOSE, Cause:Effect, enigma:puzzlement, joke:laughter, practice:improvement
 8, b, CAUSE-PURPOSE, Cause:Compensatory Action, hunger:eat, fatigue:sleep, lateness:hurry
 8, c, CAUSE-PURPOSE, EnablingAgent:Object, match:candle, gasoline:car, mnemonic:memory
-8, d, CAUSE-PURPOSE, Action/Activity:Goal, eat:satiation flee:escape, fertilize:grow
+8, d, CAUSE-PURPOSE, Action/Activity:Goal, eat:satiation, flee:escape, fertilize:grow
 8, e, CAUSE-PURPOSE, Agent:Goal, pilgrim:shrine, assassin:death, climber:peak
-8, f, CAUSE-PURPOSE, Instrument:Goal, anesthetic:numbness. ballast:stability, camouflage:concealment
+8, f, CAUSE-PURPOSE, Instrument:Goal, anesthetic:numbness, ballast:stability, camouflage:concealment
 8, g, CAUSE-PURPOSE, Instrument:Intended Action, gun:shoot, pestle:mash, abacus:calculate
 8, h, CAUSE-PURPOSE, Prevention, pesticide:vermin, antidote:poison, lubricate:friction
 9, a, SPACE-TIME, Item:Location, arsenal:weapon, seminary:theologian, bookshelf:books
