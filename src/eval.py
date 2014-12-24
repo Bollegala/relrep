@@ -421,7 +421,7 @@ def batch_process_w2v():
             ("../data/word-vects/skip-300.bin", 300), ("../data/word-vects/w2v.neg.300d.bin", 300)]
     for (model, dim) in settings:
         WR = WordReps()
-        WR.read_w2v_model(model, dim)
+        WR.read_w2v_model(model)
         for method in methods:
             print model, dim, method
             res_file.write("%s+%s, " % (model, method))

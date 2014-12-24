@@ -1,3 +1,4 @@
+#!/usr/bin/python -u
 """
 This tool can be used to perform following tasks.
     1. Count the total occurrences of words in a corpus and write the sorted counts to a file.
@@ -14,6 +15,8 @@ __licence__ = "BSD"
 __version__ = "1.0"
 
 from collections import defaultdict
+import string
+
 
 class COOC:
 
@@ -21,14 +24,22 @@ class COOC:
         """
         Various parameters
         """
-        self.VOCAB_MIN_COUNT = 5 # we ignore words that occur less than this in the corpus.
-        self.MIN_WORD_LENGTH = 2 # a word must have at least this much of characters to be considered.
-        self.WINDOW_SIZE = 5 # consider co-occurrences within this number of tokens between two words.
-        self.MIN_COOC_COUNT = 5 # do not consider word-pairs that co-occur less than this value.
-        self.MIN_PATTERN_COUNT = 10 # do not consider patterns less than this
-        self.N = 11159025 # no. of sentences in the corpus.
+        self.VOCAB_MIN_COUNT = 5  # we ignore words that occur less than this in the corpus.
+        self.MIN_WORD_LENGTH = 2  # a word must have at least this much of characters to be considered.
+        self.WINDOW_SIZE = 5  # consider co-occurrences within this number of tokens between two words.
+        self.MIN_COOC_COUNT = 50  # do not consider word-pairs that co-occur less than this value.
+        self.MIN_PATTERN_COUNT = 10  # do not consider patterns less than this
+        self.N = 11159025  # no. of sentences in the corpus.
+        self.stop_words = self.load_stop_words("../data/stopWords.txt")
         pass
 
+
+    def load_stop_words(self, fname):
+        """
+        Load the stop words from the specified file. A word per line. 
+        """
+        with open(fname) as F:
+            return set(map(string.strip, F.readlines()))
 
     def get_vocabulary(self, corpus_fname, vocab_fname):
         """
@@ -43,7 +54,7 @@ class COOC:
             if total_sentences % 1000 == 0:
                 print "\rCompleted = %d (%f)" % (total_sentences, (100 * float(total_sentences)) / float(self.N)),
             for w in line.lower().split():
-                if len(w) >= self.MIN_WORD_LENGTH:
+                if (len(w) >= self.MIN_WORD_LENGTH) and (w not in self.stop_words):
                     h[w] += 1
                     total_tokens += 1
         corpus_file.close()
@@ -72,6 +83,9 @@ class COOC:
         for line in vocab_file:
             vocab.add(line.strip().split('\t')[0])
         vocab_file.close()
+        print "Size of the vocabulary =", len(vocab)
+        if "in" in vocab:
+            print "Found"
         corpus_file = open(corpus_fname)
         pairs = defaultdict(int)
         total_sentences = 0
@@ -82,7 +96,7 @@ class COOC:
             L = line.lower().strip().split()
             for i in range(0, len(L)):
                 for j in range(i + 1, len(L)):
-                    if (j - i - 1) <= self.WINDOW_SIZE:
+                    if (L[i] in vocab) and (L[j] in vocab) and ((j - i - 1) <= self.WINDOW_SIZE) and (L[i] != L[j]):
                         pairs[(L[i], L[j])] += 1
         corpus_file.close()
         sel_pairs = []
@@ -118,6 +132,7 @@ class COOC:
             p = line.strip().split('\t')
             pairs.add((p[0], p[1]))
         pairs_file.close()
+        print "Total no. of word-pairs =", len(pairs)
         corpus_file = open(corpus_fname)
         total_sentences = 0
         patterns = defaultdict(int)
@@ -169,17 +184,65 @@ def process():
     Call each stage of the pipeline
     """
     corpus_fname = "../work/ukwac.corp"
-    vocab_fname = "../work/ukwac.vocab"
-    cooc_pairs_fname = "../work/ukwac.cooc_pairs"
+
+    #vocab_fname = "../work/ukwac.vocab"
+    #cooc_pairs_fname = "../work/ukwac.cooc_pairs"
+
+    vocab_fname = "../work/benchmark-vocabulary.txt"
+    cooc_pairs_fname = "../work/benchmark_cooc_pairs"
+    patterns_fname = "../work/benchmark_patterns"
+
     C = COOC()
     #C.get_vocabulary(corpus_fname, vocab_fname)
-    C.get_coocurrences(corpus_fname, vocab_fname, cooc_pairs_fname)
+    #C.get_coocurrences(corpus_fname, vocab_fname, cooc_pairs_fname)
+    C.get_patterns(corpus_fname, cooc_pairs_fname, patterns_fname)
+    pass
+
+
+def get_benchmark_words():
+    """
+    Create a list of words in benchmarks. 
+    """
+    vocab = set()
+    # get words in Google dataset.
+    with open("../data/benchmarks/analogy_pairs.txt") as F:
+        for line in F:
+            if line.startswith(":"):
+                continue
+            for word in line.lower().split():
+                vocab.add(word)
+    # get words from SAT.
+    from sat import SAT
+    S = SAT()
+    questions = S.getQuestions()
+    for Q in questions:
+        (q_first, q_second) = Q['QUESTION']
+        vocab.add(q_first['word']) 
+        vocab.add(q_second['word'])
+        for (c_first, c_second) in Q["CHOICES"]:
+            vocab.add(c_first['word'])
+            vocab.add(c_second['word'])
+    # get SemEval words. 
+    from semeval import SemEval
+    S = SemEval("../data/benchmarks/semeval")
+    for Q in S.data:
+        for (first, second) in Q["wpairs"]:
+            vocab.add(first)
+            vocab.add(second)
+        for (first, second) in Q["paradigms"]:
+            vocab.add(first)
+            vocab.add(second)
+    print "Total no. of words in the benchmark datasets =", len(vocab)
+    with open("../work/benchmark-vocabulary.txt", 'w') as bench_file:
+        for w in vocab:
+            bench_file.write("%s\t1\n" % w)
     pass
 
 
 if __name__ == "__main__":
-    conv_corpus()
-    #process()
+    #conv_corpus()
+    #get_benchmark_words()
+    process()
 
 
 
