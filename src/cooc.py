@@ -14,8 +14,11 @@ __author__ = "Danushka Bollegala"
 __licence__ = "BSD"
 __version__ = "1.0"
 
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import string
+import scipy.sparse 
+import numpy
+import svmlight_loader
 
 
 class COOC:
@@ -144,7 +147,7 @@ class COOC:
             for i in range(0, len(L)):
                 for j in range(i + 1, len(L)):
                     if (j - i - 1) <= self.WINDOW_SIZE and (L[i], L[j]) in pairs:
-                        for pattern in self.extract_patterns(L[i:j]):
+                        for pattern in self.extract_patterns(L[i+1:j]):
                             patterns[pattern] += 1
         corpus_file.close()
         print "Total no. of patterns before filtering =", len(patterns)
@@ -161,7 +164,90 @@ class COOC:
         print "Total no. of patterns after filtering =", count
         patterns_file.close()
         pass
+
+
+    def create_matrix(self, corpus_fname, pairs_fname, patterns_fname, prefix, debug=False):
+        """
+        We will read the selected word pairs from the pairs_fname and selected patterns from the 
+        patterns_fname. We will then find the co-occurrences between word pairs and patterns 
+        in the corpus_fname. We will create three files as follows:
+        prefix.mat = co-occurrence matrix in the libsvm format 
+        prefix.patids = pattern ids (pattern\tID)
+        prefix.wpids = word pair ids (firstWord\tsecondWord\tID)
+        """
+        # Load word pairs.
+        wpairs = []
+        with open(pairs_fname) as wpairs_file:
+            for line in wpairs_file:
+                p = map(string.strip, line.strip().split('\t'))
+                wpair = (p[0], p[1])
+                #assert(wpair not in wpairs)
+                wpairs.append(wpair)   
+        wpairs_h = dict([(wpair, i) for (i, wpair) in enumerate(wpairs)])             
+        print "Total no. of word pairs =", len(wpairs)
+
+        # Load patterns. 
+        patterns = []
+        with open(patterns_fname) as patterns_file:
+            for line in patterns_file:
+                p =  map(string.strip, line.strip().split('\t'))
+                #assert(p[0] not in patterns)
+                patterns.append(p[0])        
+        patterns_h = dict([(pattern, i) for (i, pattern) in enumerate(patterns)])        
+        print "Total no. of patterns =", len(patterns)
+
+        # Create matrix.
+        M = scipy.sparse.lil_matrix((len(wpairs), len(patterns)), dtype=int)
+        with open(corpus_fname) as corpus_file:
+            total_sentences = 0
+            for line in corpus_file:
+                total_sentences += 1
+                if total_sentences % 1000 == 0:
+                    print "\rCompleted = %d (%f)" % (total_sentences, (100 * float(total_sentences)) / float(self.N)),
+                L = line.lower().strip().split()
+                for i in range(0, len(L)):
+                    for j in range(i + 1, len(L)):
+                        wpair = (L[i], L[j])
+                        if (wpair in wpairs_h) and ((j - i - 1) <= self.WINDOW_SIZE):
+                            for pattern in self.extract_patterns(L[i+1:j]):
+                                if pattern in patterns_h:
+                                    M[wpairs_h[wpair], patterns_h[pattern]] += 1
+
+        # Delete zero rows and columns from the co-occurrence matrix.
+        nnz_rows, nnz_cols = map(numpy.unique, M.nonzero())
+        wpairs = [wpairs[i] for i in nnz_rows]
+        patterns = [patterns[i] for i in nnz_cols]
+        M = M[nnz_rows, :][:, nnz_cols]
+
+        # Write the matrix.
+        svmlight_loader.dump_svmlight_file(scipy.sparse.csr_matrix(M), numpy.arange(len(wpairs)), "%s.mat" % prefix, zero_based=True)
+
+        # Write the pattern ids.
+        print "Total no. of word pairs remaining =", len(wpairs)
+        with open("%s.patids" % prefix, 'w') as patid_file:
+            for (patid, pattern) in enumerate(patterns):
+                patid_file.write("%d\t%s\n" % (patid, pattern))
+
+        # Write word-pair ids.
+        print "Total no. of patterns remaining =", len(patterns)
+        with open("%s.wpids" % prefix, 'w') as wpid_file:
+            for (wpid, (first, second)) in enumerate(wpairs):
+                wpid_file.write("%d\t%s\t%s\n" % (wpid, first, second))
+
+        # Write actual words and patterns for debugging purposes.
+        if debug:
+            with open("%s.debug" % prefix, 'w') as F:
+                print "Writing debug matrix"
+                for (wpid, wpair) in enumerate(wpairs):
+                    F.write("%s %s " % wpair)
+                    for patid in range(M.shape[1]):
+                        if M[wpid, patid] != 0:
+                            pattern = patterns[patid]
+                            F.write("%s:%d " % (pattern, M[wpid, patid]))
+                    F.write("\n")
+        pass
     pass
+
 
 
 def conv_corpus():
@@ -190,12 +276,14 @@ def process():
 
     vocab_fname = "../work/benchmark-vocabulary.txt"
     cooc_pairs_fname = "../work/benchmark_cooc_pairs"
-    patterns_fname = "../work/benchmark_patterns"
+    patterns_fname = "../work/benchmark_patterns.10000"
+    prefix = "../work/benchmark"
 
     C = COOC()
     #C.get_vocabulary(corpus_fname, vocab_fname)
     #C.get_coocurrences(corpus_fname, vocab_fname, cooc_pairs_fname)
-    C.get_patterns(corpus_fname, cooc_pairs_fname, patterns_fname)
+    #C.get_patterns(corpus_fname, cooc_pairs_fname, patterns_fname)
+    C.create_matrix(corpus_fname, cooc_pairs_fname, patterns_fname, prefix, debug=False)
     pass
 
 
