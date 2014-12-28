@@ -16,6 +16,7 @@ __version__ = "1.0"
 
 from collections import defaultdict, OrderedDict
 import string
+import sys
 import scipy.sparse 
 import numpy
 import svmlight_loader
@@ -30,7 +31,7 @@ class COOC:
         self.VOCAB_MIN_COUNT = 5  # we ignore words that occur less than this in the corpus.
         self.MIN_WORD_LENGTH = 2  # a word must have at least this much of characters to be considered.
         self.WINDOW_SIZE = 5  # consider co-occurrences within this number of tokens between two words.
-        self.MIN_COOC_COUNT = 50  # do not consider word-pairs that co-occur less than this value.
+        self.MIN_COOC_COUNT = 100  # do not consider word-pairs that co-occur less than this value.
         self.MIN_PATTERN_COUNT = 10  # do not consider patterns less than this
         self.N = 11159025  # no. of sentences in the corpus.
         self.stop_words = self.load_stop_words("../data/stopWords.txt")
@@ -87,8 +88,6 @@ class COOC:
             vocab.add(line.strip().split('\t')[0])
         vocab_file.close()
         print "Size of the vocabulary =", len(vocab)
-        if "in" in vocab:
-            print "Found"
         corpus_file = open(corpus_fname)
         pairs = defaultdict(int)
         total_sentences = 0
@@ -133,6 +132,7 @@ class COOC:
         pairs_file = open(cooc_pairs_fname)
         for line in pairs_file:
             p = line.strip().split('\t')
+            assert(len(p) == 3)
             pairs.add((p[0], p[1]))
         pairs_file.close()
         print "Total no. of word-pairs =", len(pairs)
@@ -179,7 +179,8 @@ class COOC:
         wpairs = []
         with open(pairs_fname) as wpairs_file:
             for line in wpairs_file:
-                p = map(string.strip, line.strip().split('\t'))
+                p = map(string.strip, line.strip().split('\t')) 
+                assert(len(p) == 3)
                 wpair = (p[0], p[1])
                 #assert(wpair not in wpairs)
                 wpairs.append(wpair)   
@@ -212,6 +213,12 @@ class COOC:
                             for pattern in self.extract_patterns(L[i+1:j]):
                                 if pattern in patterns_h:
                                     M[wpairs_h[wpair], patterns_h[pattern]] += 1
+
+        # Delete co-occurrences less than 2.
+        for i in range(M.shape[0]):
+            for j in M[i,:].nonzero()[1]:
+                if M[i,j] < 2:
+                    M[i,j] = 0
 
         # Delete zero rows and columns from the co-occurrence matrix.
         nnz_rows, nnz_cols = map(numpy.unique, M.nonzero())
@@ -275,7 +282,7 @@ def process():
     #cooc_pairs_fname = "../work/ukwac.cooc_pairs"
 
     vocab_fname = "../work/benchmark-vocabulary.txt"
-    cooc_pairs_fname = "../work/benchmark_cooc_pairs"
+    cooc_pairs_fname = "../work/benchmark_pairs"
     patterns_fname = "../work/benchmark_patterns.10000"
     prefix = "../work/benchmark"
 
@@ -284,6 +291,366 @@ def process():
     #C.get_coocurrences(corpus_fname, vocab_fname, cooc_pairs_fname)
     #C.get_patterns(corpus_fname, cooc_pairs_fname, patterns_fname)
     C.create_matrix(corpus_fname, cooc_pairs_fname, patterns_fname, prefix, debug=False)
+    pass
+
+
+def create_LLR_matrix():
+    """
+    Compute LLR-based feature values. 
+    """
+    prefix = "../work/benchmark"
+    wpids, patids, M, labels = load_cooc("%s.mat" % prefix, "%s.wpids" % prefix, "%s.patids" % prefix)
+    total_patterns = len(patids)
+    N = numpy.zeros(total_patterns, dtype=numpy.int)
+    words = set()
+    for (first, second) in wpids.values():
+        words.add(first)
+        words.add(second)
+    n = {}
+    K = {}
+    for word in words:
+        n[word] = numpy.zeros(total_patterns, dtype=numpy.int)
+        K[word] = numpy.zeros(total_patterns, dtype=numpy.int)
+    M = M.tolil()
+    for i in range(0, M.shape[0]):
+        assert(i == labels[i])
+        if i % 1000 == 0:
+            print "\r Pre-computed %d" % i,
+        (first, second) = wpids[labels[i]]
+        for j in M[i,:].nonzero()[1]:
+            n[first][j] += M[i,j]
+            K[second][j] += M[i,j]
+            N[j] += M[i,j]
+
+    # Computing LLR matrix
+    P = scipy.sparse.lil_matrix((len(wpids), total_patterns), dtype=numpy.float)
+    for i in range(0, M.shape[0]):
+        if i % 1000 == 0:
+            print "\r Post-computed %d" % i,
+        (first, second) = wpids[labels[i]]
+        for j in M[i,:].nonzero()[1]:
+            P[i,j] = get_LLR(M[i,j], K[second][j], n[first][j], N[j])
+    svmlight_loader.dump_svmlight_file(P, labels, "%s.LLR" % prefix, zero_based=True)
+    pass
+
+
+def get_LLR(k, K, n, N):
+    """
+    Compute the Log Likelihood Ratio. 
+    """
+    val = k * numpy.log(float(k * N) / float(n * K))
+    if n > k:
+        val += (n - k) * numpy.log(float((n - k) * N) / float(n * (N - K)))
+    if K > k:
+        val += (K - k) * numpy.log(float(N * (K - k)) / float(K * (N - n)))
+    if (N - K - n + k) > 0:
+        val += (N - K - n + k) * numpy.log(float(N * (N - K - n + k)) / float((N - K) * (N - n)))
+    return val
+
+
+def convert_PPMI(mat):
+    """
+     Compute the PPMI values for the raw co-occurrence matrix.
+     PPMI values will be written to mat and it will get overwritten.
+     """    
+    (nrows, ncols) = mat.shape
+    print "no. of rows =", nrows
+    print "no. of cols =", ncols
+    colTotals = mat.sum(axis=0)
+    rowTotals = mat.sum(axis=1).T
+    N = numpy.sum(rowTotals)
+    rowMat = numpy.ones((nrows, ncols), dtype=numpy.float)
+    for i in range(nrows):
+        rowMat[i,:] = 0 if rowTotals[0,i] == 0 else rowMat[i,:] * (1.0 / float(rowTotals[0,i]))
+    colMat = numpy.ones((nrows, ncols), dtype=numpy.float) 
+    for j in range(ncols):
+        colMat[:,j] = 0 if colTotals[0,j] == 0 else (1.0 / float(colTotals[0,j]))
+    P = N * mat.toarray() * rowMat * colMat
+    P = numpy.fmax(numpy.zeros((nrows,ncols), dtype=numpy.float64), numpy.log(P))
+    return scipy.sparse.csr_matrix(P)
+
+
+def create_PPMI_matrix():
+    """
+    Create and save PPMI matrix from raw co-occurrences matrix.
+    """
+    prefix = "../work/benchmark"
+    wpids, patids, M, labels = load_cooc("%s.mat" % prefix, "%s.wpids" % prefix, "%s.patids" % prefix)
+    P = convert_PPMI(M)
+    svmlight_loader.dump_svmlight_file(P, labels, "%s.ppmi" % prefix, zero_based=True)
+    pass
+
+
+def normalize(M):
+    n = M.shape[0]
+    for i in range(0, n):
+        val = numpy.linalg.norm(M[i,:])
+        if val != 0:
+            M[i,:] /= val 
+    pass
+
+
+def compute_pair_similarity():
+    """
+    Compute pairwise similarity between word-pairs
+    """
+    prefix = "../work/benchmark"
+    matrix_fname = "%s.LLR" % prefix
+    wpids, patids, M, labels = load_cooc(matrix_fname, "%s.wpids" % prefix, "%s.patids" % prefix)
+    pairs = get_benchmark_pairs()
+    wpids_h = dict([(wpair, wpid) for (wpid, wpair) in wpids.items()])
+    selected_pairs = []
+    for wpair in pairs:
+        if wpair in wpids_h:
+            selected_pairs.append(wpair)
+
+    H = numpy.zeros((len(selected_pairs), len(patids)), dtype=numpy.float)    
+    for (i, wpair) in enumerate(selected_pairs):
+        wpid = wpids_h[wpair]
+        row_no = numpy.where(labels == wpid)[0]
+        assert(row_no == wpid)
+        H[i, :] = M[row_no,:].todense()
+    normalize(H)
+    S = numpy.dot(H, H.T)
+    L = []
+    for i in range(0, S.shape[0]):
+        for j in range(i+1, S.shape[0]):
+            val = S[i,j]
+            if val != 0:
+                L.append((i, j, val))
+    L.sort(lambda x, y: -1 if x[2] > y[2] else 1)
+    with open("%s.sim_scores.LLR" % prefix, 'w') as sim_file:
+        for (i, j, val) in L:
+            (A, B) = selected_pairs[i]
+            (C, D) = selected_pairs[j]
+            sim_file.write("%s %s %d %s %s %d %f\n" % (A, B, wpids_h[(A,B)], C, D, wpids_h[(C,D)], val))
+    pass
+
+
+def select_train_data():
+    """
+    Select Google train pairs as positive instances. Select top similar word pairs 
+    according to relational similarity that do not appear in the positive train 
+    instances as the negative train instances.
+    """
+    prefix = "../work/benchmark"
+    positives = set()
+    # get pairs in Google dataset.
+    with open("../data/benchmarks/analogy_pairs.txt") as F:
+        for line in F:
+            if line.startswith(":"):
+                continue
+            (A, B, C, D) = line.lower().split()
+            positives.add((A, B, C, D))
+            positives.add((B, A, D, C))
+            positives.add((A, C, B, D))
+            positives.add((C, A, D, B))
+    positives = list(positives)
+    print "Generated positive instances =", len(positives)
+
+    # Load similarity scores
+    sim_fname = "%s.sim_scores" % prefix
+    scores = []
+    with open(sim_fname) as sim_file:
+        for line in sim_file:
+            p = line.strip().split()
+            A, B, C, D = map(string.strip, (p[0], p[1], p[3], p[4]))
+            if A in (C, D) or B in (C, D):
+                continue
+            if (A, B) == (B, A):
+                continue
+            scores.append((A, B, C, D))
+
+    # Load word pair ids.
+    matrix_fname = "%s.ppmi" % prefix
+    wpids, patids, M, labels = load_cooc(matrix_fname, "%s.wpids" % prefix, "%s.patids" % prefix)
+
+    # Select negative training instances
+    negatives = set()
+    n = 0
+    for (A, B, C, D) in scores:
+        if (A, B, C, D) not in positives:
+            negatives.add((A, B, C, D))
+            n += 1
+            if n == 10000:
+                break 
+    negatives = list(negatives)
+
+    # write the training instances to files
+    wpids_h = dict([(wpair, wpid) for (wpid, wpair) in wpids.items()])
+    pos_count = neg_count = 0
+    with open("%s.train.pos" % prefix, 'w') as pos_file:
+        for (A, B, C, D) in positives:
+            if (A, B) in wpids_h and (C, D) in wpids_h:
+                pos_file.write("%s %s %d %s %s %d\n" % (A, B, wpids_h[(A, B)], C, D, wpids_h[(C, D)]))
+                pos_count += 1
+    with open("%s.train.neg" % prefix, 'w') as neg_file:
+        for (A, B, C, D) in negatives:
+            neg_file.write("%s %s %d %s %s %d\n" % (A, B, wpids_h[(A, B)], C, D, wpids_h[(C, D)]))
+            neg_count += 1
+    print "Total no. of positive instances =", pos_count
+    print "Total no. of negative instances =", neg_count   
+    pass
+
+
+def select_word_reps():
+    """
+    For each word in word-pairs, extract the word representations 
+    learnt by GloVe and save to a model file. These vectors will be used 
+    to initialize the proposed method. 
+    """
+    from eval import WordReps
+    glove = WordReps()
+    wpair_fname = "../work/benchmark.wpids"
+    model = "../data/word-vects/glove.42B.300d.txt"
+    dim = 300
+    print "Model file name =", model
+    glove.read_model(model, dim)
+    vocab = set()
+    with open(wpair_fname) as F:
+        for line in F:
+            p = line.strip().split('\t')
+            first = p[1].strip()
+            second = p[2].strip()
+            vocab.add(first)
+            vocab.add(second)
+    vects_file = open("../work/benchmark.vects", 'w')
+    for word in vocab:
+        if word not in glove.vects:
+            print "Missing word =", word
+        else:
+            vect = glove.vects[word]
+            vects_file.write("%s " % word)
+            for i in range(dim):
+                vects_file.write("%s " % str(vect[i]))
+            vects_file.write("\n")
+    vects_file.close()
+    pass
+
+
+def select_train_data_by_total_patterns():
+    """
+    Select positive and negative training word pairs. 
+    """
+    prefix = "../work/benchmark"
+    wpids, patids, M, labels = load_cooc(prefix)
+    wp_counts = {}
+    M = M.todense()
+    for i in range(0, M.shape[0]):
+        print "\r%d" % i,
+        wpid = labels[i]
+        wp_counts[wpids[wpid]] = numpy.count_nonzero(M[i,:])
+    L = wp_counts.items()
+    L.sort(lambda x, y: -1 if x[1] > y[1] else 1)
+    with open("../work/counts", 'w') as F:
+        for ((first, second), count) in L:
+            F.write("%s\t%s\t%d\n" % (first, second, count))
+    pass
+
+
+def get_benchmark_pairs():
+    """
+    Create a list of unique word pairs in benchmarks. 
+    """
+    pairs = set()
+    # get pairs in Google dataset.
+    with open("../data/benchmarks/analogy_pairs.txt") as F:
+        for line in F:
+            if line.startswith(":"):
+                continue
+            (A, B, C, D) = line.lower().split()
+            pairs.add((A,B))
+            pairs.add((C,D))
+
+    # get pairs from SAT.
+    from sat import SAT
+    S = SAT()
+    questions = S.getQuestions()
+    for Q in questions:
+        (q_first, q_second) = Q['QUESTION']
+        pairs.add((q_first['word'], q_second['word']))
+        for (c_first, c_second) in Q["CHOICES"]:
+            pairs.add((c_first['word'], c_second['word']))
+
+    # get SemEval words. 
+    from semeval import SemEval
+    S = SemEval("../data/benchmarks/semeval")
+    for Q in S.data:
+        for (first, second) in Q["wpairs"]:
+            pairs.add((first, second))
+        for (first, second) in Q["paradigms"]:
+            pairs.add((first, second))
+    print "Total no. of word-pairs in the benchmark datasets =", len(pairs)
+    with open("../work/benchmark-pairs.txt", 'w') as bench_file:
+        for (first, second) in pairs:
+            bench_file.write("%s %s\n" % (first, second))
+    return list(pairs)
+
+
+def split_google():
+    """
+    Splits the google analogy dataset into train/test. 
+    """
+    analogy_file = open("../data/benchmarks/analogy_pairs.txt")
+    questions = OrderedDict()
+    while 1:
+        line = analogy_file.readline().lower()
+        if len(line) == 0:
+            break
+        if line.startswith(':'):  # This is a label 
+            label = line.split(':')[1].strip()
+            questions[label] = []
+        else:
+            p = line.strip().split()
+            questions[label].append((p[0], p[1], p[2], p[3]))
+    analogy_file.close()
+    train_questions = test_questions = 0
+    train_file = open("../data/benchmarks/analogy_pairs_train.txt", 'w')
+    test_file = open("../data/benchmarks/analogy_pairs_test.txt", 'w')
+    ratio = 0.5  # train/test
+    for label in questions:
+        n = int(len(questions[label]) * ratio)
+        train_file.write(": %s\n" % label)
+        test_file.write(": %s\n" % label)
+        for (i, (A, B, C, D)) in enumerate(questions[label]):
+            if i < n:
+                train_file.write("%s %s %s %s\n" % (A, B, C, D))
+                train_questions += 1
+            else:
+                test_file.write("%s %s %s %s\n" % (A, B, C, D))
+                test_questions += 1
+    train_file.close()
+    test_file.close()
+    print "Train questions =", train_questions
+    print "Test questions  =", test_questions
+    pass
+    
+
+def clean_patterns():
+    """
+    Interactively clean suspicious patterns. 
+    """
+    digits = set(string.digits)
+    input_file = open("../work/benchmark_patterns")
+    output_file = open("../work/benchmark_patterns.filtered", 'w')
+    removed = included = 0
+    for line in input_file:
+        p = line.strip().split()
+        if len(set(p[0]).intersection(digits)) > 0:
+            print line.strip(), "y/n?" 
+            #ans = sys.stdin.readline().strip()
+            ans = 'N'
+            if ans == 'Y' or ans == 'y':
+                output_file.write("%s" % line)
+                included += 1
+            else:
+                removed += 1
+        else:
+            output_file.write("%s" % line)
+    input_file.close()
+    output_file.close()
+    print "Total no. of removed patterns =", removed 
+    print "Total no. of included patterns =", included
     pass
 
 
@@ -327,10 +694,38 @@ def get_benchmark_words():
     pass
 
 
+def load_cooc(matrix_fname, wpair_fname, pattern_fname):
+    """
+    Load the co-occurrence matrix, word pair ids, and pattern ids. 
+    """
+    (M, labels) = svmlight_loader.load_svmlight_file(matrix_fname)
+    with open(pattern_fname) as F:
+        patids = {}
+        for line in F:
+            p = line.strip().split('\t')
+            patids[int(p[0])] = p[1].strip()
+    with open(wpair_fname) as F:
+        wpids = {}
+        for line in F:
+            p = line.strip().split('\t')
+            first = p[1].strip()
+            second = p[2].strip()
+            wpids[int(p[0])] = (first, second)
+    return (wpids, patids, M, labels)
+
 if __name__ == "__main__":
     #conv_corpus()
     #get_benchmark_words()
-    process()
+    #get_benchmark_pairs()
+    #process()
+    #clean_patterns()
+    #create_PPMI_matrix()
+    #create_LLR_matrix()
+    #compute_pair_similarity()
+    #split_google()
+    #select_train_data()
+    select_word_reps()
+    pass
 
 
 

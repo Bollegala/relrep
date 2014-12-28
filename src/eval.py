@@ -100,7 +100,7 @@ class WordReps:
             return numpy.zeros(self.vector_size, float)
         wind = self.vocab.index(word)
         print wind
-        return self.vectors[wind,:]
+        return self.vects[wind,:]
 
 
     def test_model(self):
