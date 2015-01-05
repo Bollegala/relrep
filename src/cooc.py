@@ -390,7 +390,7 @@ def normalize(M):
     pass
 
 
-def compute_pair_similarity():
+def compute_wpair_similarity():
     """
     Compute pairwise similarity between word-pairs
     """
@@ -726,6 +726,9 @@ if __name__ == "__main__":
     #select_train_data()
     select_word_reps()
     pass
+
+
+
 
 
 
