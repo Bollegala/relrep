@@ -443,3 +443,4 @@ if __name__ == "__main__":
     #process()
     batch_process_w2v()
     batch_process_glove()
+    
