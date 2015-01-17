@@ -44,7 +44,6 @@ class RepLearn:
         self.R_total = defaultdict(float)  # |R(p)|
         self.p = {}  # pattern representations
         self.H = {}  # index from patterns to words. H[p][x] contains the value H(p,x).
-        self.G = defaultdict(set)  # index from words to patterns. G[x] is the set of patterns in which x occurs.
 
         n = len(self.patids)
         for j in range(0, len(self.patids)):
@@ -65,8 +64,6 @@ class RepLearn:
                 self.p[j] += self.x[u] - self.x[v]
                 self.H[j][u] += val 
                 self.H[j][v] -= val
-                self.G[u].add(j)
-                self.G[v].add(j)
                 pass
         pass
 
@@ -80,6 +77,16 @@ class RepLearn:
                 p = line.strip().split()
                 L.append((int(p[2]), int(p[3]))) 
         return L 
+
+    def update_pattern_reps(self):
+        """
+        Update the pattern representations
+        """
+        for p in self.R:
+            self.p[p] = numpy.zeros(self.D, dtype=numpy.float64)
+            for (u, v, val) in self.R[p]:
+                self.p[p] += self.x[u] - self.x[v]
+        pass
 
     def random_initialization(self):
         """
@@ -105,9 +112,12 @@ class RepLearn:
         alpha = 1.7159
         beta = 2.0 / 3.0
         N = len(data)
+        s_grad = numpy.zeros(self.D, dtype=numpy.float64)  # AdaGrad
+        uvec = numpy.ones(self.D, dtype=numpy.float64)  # one vector
 
         for epoh in range(epohs):
             loss = 0
+            loss_grad_norm = 0
             for (i, (p1, p2, t)) in enumerate(data):
                 print "\rEpoh: %d (%d of %d) %f Complete" % (epoh, i, N, float(100 * i) / float(N)),
                 sys.stdout.flush()
@@ -120,19 +130,16 @@ class RepLearn:
                 l = y_prime * (y - t)
                 # get the set of words involved
                 cand_words = set(self.H[p1].keys()).union(set(self.H[p2].keys()))
-                cand_patterns = set()
 
                 # update the word representations
                 for w in cand_words:
-                    self.x[w] -= l * ((self.H[p1][w] / self.R_total[p1]) * self.p[p2] - (self.H[p2][w] / self.R_total[p2]) * self.p[p1])
-                    cand_patterns = cand_patterns.union(self.G[w])
+                    g = l * ((self.H[p1][w] / self.R_total[p1]) * self.p[p2] - (self.H[p2][w] / self.R_total[p2]) * self.p[p1])
+                    loss_grad_norm += numpy.linalg.norm(g)
+                    s_grad = g * g
+                    self.x[w] -= (1.0 / numpy.sqrt(s_grad + uvec)) * g
 
-                # update the pattern representations
-                for p in cand_patterns:
-                    self.p[p] = numpy.zeros(self.D, dtype=numpy.float64)
-                    for (u, v, val) in self.R[p]:
-                        self.p[p] += self.x[u] - self.x[v]
-            print "\n Loss =", loss
+            self.update_pattern_reps()      
+            print "\n Loss = %f, |d(Loss)| = %f" % (numpy.sqrt(loss) / len(data)), loss_grad_norm / len(data)
             sys.stdout.flush()
         pass
 
@@ -142,8 +149,8 @@ def initialize_model():
     wpid_fname = "../work/benchmark.wpids"
     patid_fname = "../work/benchmark.patids"
     matrix_fname = "../work/benchmark.ppmi"
-    pos_fname = "../work/unsup.pos"
-    neg_fname = "../work/unsup.neg"
+    pos_fname = "../work/small.pos"
+    neg_fname = "../work/small.neg"
     RL = RepLearn(D)
     RL.load_data(wpid_fname, patid_fname, matrix_fname, pos_fname, neg_fname)
     return RL
