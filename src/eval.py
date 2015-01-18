@@ -231,6 +231,7 @@ def eval_Google_Analogies(vects, res_fname, method):
                 cands.append(p[3])
     analogy_file.close()
     valid_questions = sum([len(questions[label]) for label in questions])
+    print "== Google Analogy Dataset =="
     print "Total no. of question types =", len(questions) 
     print "Total no. of candidates =", len(cands)
     print "Valid questions =", valid_questions
@@ -439,8 +440,70 @@ def batch_process_w2v():
     pass
 
 
+def batch_process():
+    res_file = open("../work/proposed.csv", 'w')
+    res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
+    methods = ["CosAdd", "CosMult", "CosSub", "PairDiff", "DomFunc"]
+    settings = [("../work/wreps.txt", 100)]
+    for (model, dim) in settings:
+        WR = WordReps()
+        WR.read_model(model, dim)
+        for method in methods:
+            print model, dim, method
+            res_file.write("%s+%s, " % (model, method))
+            res_file.flush()
+            Google_res = eval_Google_Analogies(WR.vects, "../work/Google.csv", method)
+            res_file.write("%f, %f, %f, " % (Google_res["semantic"], Google_res["syntactic"], Google_res["total"]))
+            res_file.flush()
+            SAT_res = eval_SAT_Analogies(WR.vects, method)
+            res_file.write("%f, " % SAT_res["acc"])
+            res_file.flush()
+            SemEval_res = eval_SemEval(WR.vects, method)
+            res_file.write("%f\n" % SemEval_res["acc"])
+            res_file.flush()
+    res_file.close()
+    pass
+
+
+def select_pretrained_reps():
+    """
+    Select pre-trained word vectors for the words in the words in word pairs.
+    Write thoese vectors to a file. We will use this file to initialize train.cpp 
+    """
+    wpid_fname = "../work/benchmark.wpids"
+    output_fname = "../work/glove.pretrained"
+    D = 300
+    pretrained_fname = "../data/word-vects/glove.42B.300d.txt"
+    WR = WordReps()
+    print "Model file name =", pretrained_fname
+    WR.read_model(pretrained_fname, D)
+    print "Loading done"
+    vocab = set()
+    with open(wpid_fname) as wpid_file:
+        for line in wpid_file:
+            p = line.strip().split()
+            vocab.add(p[1].strip())
+            vocab.add(p[2].strip())
+
+    with open("../work/benchmark-vocabulary.txt") as bench_file:
+        for line in bench_file:
+            vocab.add(line.strip().split('\t')[0])
+
+    print "Vocab size =", len(vocab)
+
+    with open(output_fname, 'w') as F:
+        for w in vocab:
+            x = WR.vects.get(w, numpy.zeros(D, dtype=numpy.float64))
+            F.write("%s " % w)
+            for i in range(0, D):
+                F.write("%f " % x[i])
+            F.write("\n")
+    pass
+
+
 if __name__ == "__main__":
     #process()
-    batch_process_w2v()
-    batch_process_glove()
-    
+    #batch_process_w2v()
+    #batch_process_glove()
+    batch_process()
+    #select_pretrained_reps()

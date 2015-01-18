@@ -101,7 +101,7 @@ class RepLearn:
             self.x[wid] = numpy.random.uniform(low=-a, high=a, size=self.D)
         pass
 
-    def train(self, epohs=10):
+    def train(self, epohs=1, init_alpha=0.0001):
         """
         Perform training
         """
@@ -118,8 +118,9 @@ class RepLearn:
         for epoh in range(epohs):
             loss = 0
             loss_grad_norm = 0
+            count = 0
+            update_count = 0
             for (i, (p1, p2, t)) in enumerate(data):
-                print "\rEpoh: %d (%d of %d) %f Complete" % (epoh, i, N, float(100 * i) / float(N)),
                 sys.stdout.flush()
                 # Compute the part of the loss that depends on p1, p2
                 score = numpy.dot(self.p[p1], self.p[p2])
@@ -127,6 +128,7 @@ class RepLearn:
                 y_prime = alpha * beta * (1 - y ** 2)
                 y = alpha * y 
                 loss += (y - t) ** 2
+                count += 1
                 l = y_prime * (y - t)
                 # get the set of words involved
                 cand_words = set(self.H[p1].keys()).union(set(self.H[p2].keys()))
@@ -135,17 +137,21 @@ class RepLearn:
                 for w in cand_words:
                     g = l * ((self.H[p1][w] / self.R_total[p1]) * self.p[p2] - (self.H[p2][w] / self.R_total[p2]) * self.p[p1])
                     loss_grad_norm += numpy.linalg.norm(g)
+                    update_count += 1
                     s_grad = g * g
-                    self.x[w] -= (1.0 / numpy.sqrt(s_grad + uvec)) * g
+                    self.x[w] -= (init_alpha / numpy.sqrt(s_grad + uvec)) * g
+
+                print "\rEpoh: %d (%d of %d) %f Complete. Loss = %f, |gradLoss| = %E, CandWords = %d" % (
+                    epoh, i, N, float(100 * i) / float(N), numpy.sqrt(loss / count), (loss_grad_norm / update_count), len(cand_words)),
 
             self.update_pattern_reps()      
-            print "\n Loss = %f, |d(Loss)| = %f" % (numpy.sqrt(loss) / len(data)), loss_grad_norm / len(data)
+            print "\n Loss = %f, |gradLoss| = %E" % (numpy.sqrt(loss / count), (loss_grad_norm / update_count))
             sys.stdout.flush()
         pass
 
 
 def initialize_model():
-    D = 10
+    D = 100
     wpid_fname = "../work/benchmark.wpids"
     patid_fname = "../work/benchmark.patids"
     matrix_fname = "../work/benchmark.ppmi"
@@ -157,7 +163,7 @@ def initialize_model():
 
 
 def process(RE):
-    RE.train(2)
+    RE.train(epohs=2, init_alpha=1.0)
     pass
 
 if __name__ == '__main__':

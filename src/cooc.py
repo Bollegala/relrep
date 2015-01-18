@@ -690,6 +690,7 @@ def select_pattern_pairs_unsupervised():
     pass
 
 
+
 if __name__ == "__main__":
     #conv_corpus()
     #get_benchmark_words()
@@ -698,7 +699,7 @@ if __name__ == "__main__":
     #clean_patterns()
     #create_PPMI_matrix()
     #compute_pattern_similarity()
-    select_pattern_pairs_unsupervised()
+    #select_pattern_pairs_unsupervised()
     pass
 
 

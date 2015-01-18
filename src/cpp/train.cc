@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <fstream>
+#include <stdio.h>
 
 #include <Eigen/Dense>
 
@@ -21,6 +22,15 @@
 #include "dictionary.hh"
 
 #include "omp.h"
+
+#define KNRM  "\x1B[0m"
+#define KRED  "\x1B[31m"
+#define KGRN  "\x1B[32m"
+#define KYEL  "\x1B[33m"
+#define KBLU  "\x1B[34m"
+#define KMAG  "\x1B[35m"
+#define KCYN  "\x1B[36m"
+#define KWHT  "\x1B[37m"
 
 using namespace std;
 using namespace Eigen;
@@ -42,7 +52,7 @@ vector<string> patids; // pattern ids
 vector<string> vocab; // vocabulary
 int D; // Dimensionality of the word vectors
 unordered_map<string, VectorXd> x; // word representations
-VectorXd s_grad; // Squared gradient for AdaGrad
+unordered_map<string, VectorXd> s_grad; // Squared gradient for AdaGrad
 unordered_map<int, VectorXd> p; // pattern representations
 unordered_map<int, vector<edge>> R; // Set R(p)
 unordered_map<int, double> R_totals; // /R(p)
@@ -88,12 +98,64 @@ void initialize_random_word_vectors(){
     // Randomly initialize word vectors
     fprintf(stderr, "Dimensionality of the word vectors = %d\n", D);
     double factor = sqrt(3) / sqrt(D);
-    for (int i = 0; i < (int) vocab.size(); i++){
+    for (int i = 0; i < (int) vocab.size(); ++i){
         x[vocab[i]] = factor * VectorXd::Random(D);
-    }
-    
+    }    
 }
 
+
+void scaling_word_vectors(){
+    // scale the word vectors at the start of the training
+    VectorXd mean = VectorXd::Zero(D);
+    VectorXd squared_mean = VectorXd::Zero(D);
+    for (auto w = x.begin(); w != x.end(); ++w){
+        mean += w->second;
+        squared_mean += (w->second).cwiseProduct(w->second);
+    }
+    mean = mean / ((double) x.size());
+    VectorXd sd = squared_mean - mean.cwiseProduct(mean);
+    for (int i = 0; i < D; ++i){
+        sd[i] = sqrt(sd[i]);
+
+    }
+
+    for (auto w = x.begin(); w != x.end(); ++w){
+        VectorXd tmp = VectorXd::Zero(D);
+        for (int i = 0; i < D; ++i){
+            tmp[i] = (w->second)[i] - mean[i];
+            if (sd[i] != 0) 
+                tmp[i] /= sd[i];
+        }
+        w->second = tmp;
+    }
+
+}
+
+
+void load_word_vectors(string vects_fname){
+    // Initialize word vectors using pre-trained word vectors
+    fprintf(stderr, "%sDimensionality of the word vectors = %d%s\n", KRED, D, KNRM);
+    fprintf(stderr, "%sReading pre-trained vectors from %s%s\n", KRED, vects_fname.c_str(), KNRM);
+    FILE *fp= fopen(vects_fname.c_str(), "r");
+    int count = 0;
+    for (char buf[65536]; fgets(buf, sizeof(buf), fp); ) {
+        char curword[1024];
+        sscanf(buf, "%s %[^\n]", curword, buf);
+        string w(curword);
+        //fprintf(stderr, "%s\n", w.c_str());
+        x[w] = VectorXd::Zero(D);
+        count = 0;
+        while (1) {
+            double fval;
+            bool end = (sscanf(buf, "%lf %[^\n]", &fval, buf) != 2);
+            x[w][count] = fval;
+            count += 1;
+        if (end) break;
+        }
+        assert(count == D);
+    }
+
+}
 
 void compute_pattern_reps(){
     // Use word representations to compute pattern representations
@@ -101,11 +163,10 @@ void compute_pattern_reps(){
         p[patid] = VectorXd::Zero(D);
         for (int j = 0; j < (int) R[patid].size(); ++j){
             edge e = R[patid][j];
-            p[patid] += x[e.u] - x[e.v];
+            p[patid] += e.weight * (x[e.u] - x[e.v]);
         }
     }
 }
-
 
 void initialize_pattern_reps(){
     // Use word representations to compute pattern representations
@@ -180,23 +241,29 @@ void save_word_reps(string fname){
     reps_file.close();
 }
 
-void train(int epohs){
+
+void train(int epohs, double init_alpha){
     // Training 
-    double init_alpha = 1.0; // AdaGrad initial learning rate
     fprintf(stderr, "\nTotal no of train instances = %d\n", (int) train_data.size());
     fprintf(stderr, "Total ephos to train = %d\n", epohs);
+    fprintf(stderr, "Initial learning rate = %f\n", init_alpha);
     // Randomly shuffle train instances
     random_shuffle(train_data.begin(), train_data.end());
-    int p1, p2, label, count;
-    double loss, loss_grad_norm, score, y, y_prime, lmda;
+    int p1, p2, label, count, update_count;
+    double loss, loss_grad_norm, weight_norm, score, y, y_prime, lmda;
     double alpha = 1.7159;
     double beta = 2.0 / 3.0;
-    VectorXd s_grad = VectorXd::Zero(D);
+
+    // Initialize squared gradient counts for AdaGrad
+    for (auto w = x.begin(); w != x.end(); ++w)
+        s_grad[w->first] = VectorXd::Zero(D);
 
     for (int t = 0; t < epohs; ++t){
         loss = 0;
         loss_grad_norm = 0;
+        weight_norm = 0;
         count = 0;
+        update_count = 0;
         for (auto inst = train_data.begin(); inst != train_data.end(); ++inst){
             count += 1;
             p1 = inst->p1;
@@ -221,15 +288,21 @@ void train(int epohs){
             for (auto w = cand_words.begin(); w != cand_words.end(); ++w){
                 VectorXd grad = lmda * (((H[p1][(*w)] / R_totals[p1]) * p[p2]) - ((H[p2][(*w)] / R_totals[p2]) * p[p1]));
                 loss_grad_norm += grad.norm();
-                s_grad += grad.cwiseProduct(grad);
+                update_count += 1;
+                s_grad[(*w)] += grad.cwiseProduct(grad);
+                weight_norm += x[(*w)].norm();
                 for (int i = 0; i < D; ++i)
-                    x[(*w)][i] -= (init_alpha * grad[i]) / sqrt(1.0 + s_grad[i]);  
+                    x[(*w)][i] -= (init_alpha * grad[i]) / sqrt(1.0 + s_grad[(*w)][i]);  
+                    //x[(*w)][i] -= grad[i];
                 
             }
-            fprintf(stderr, "\rEpoh = %d: instance = %d, Loss = %f, CandWords = %d, LossNorm = %f", t, count, (sqrt(loss) / (double) count), (int) cand_words.size(), loss_grad_norm / (double) count);
+            fprintf(stderr, "\rEpoh = %d: instance = %d, Loss(MSRE) = %f, ||gradLoss|| = %E, ratio = %E, CandWords = %d", 
+                t, count, sqrt(loss / (double) count),  
+                (loss_grad_norm / (double) update_count), (loss_grad_norm / weight_norm),  (int) cand_words.size());
         }
         compute_pattern_reps();
-        fprintf(stderr, "\nLoss = %f, LossNorm = %f\n", (sqrt(loss) / (double) train_data.size()), (loss_grad_norm / (double) train_data.size()));
+        fprintf(stderr, "%s\nLoss(MSRE) = %f, ||gradLoss|| = %E%s\n", 
+            KYEL, sqrt(loss / (double) count), loss_grad_norm / (double) update_count, KNRM);
     }
 }
 
@@ -238,22 +311,35 @@ void train(int epohs){
 
 int main(int argc, char *argv[]) { 
   if (argc == 1) {
-    fprintf(stderr, "usage: ./train --dim=dimensionality --wpid_fname=wpids --patid_fname=patids --matrix_fname=matrix --pos=positives.txt --neg=negatives.txt --ephos=rounds>\n"); 
+    fprintf(stderr, "usage: ./train --dim=dimensionality --wpid_fname=wpids --patid_fname=patids \
+                            --matrix_fname=matrix --pos=positives.txt --neg=negatives.txt \
+                            --ephos=rounds --alpha=initial_learning_rate\n"); 
     return 0;
   }
-  int no_threads = 10;
+  int no_threads = 100;
   omp_set_num_threads(no_threads);
   setNbThreads(no_threads);
   initParallel(); 
   parse_args::init(argc, argv); 
   load_data(parse_args::get<string>("--wpid_fname"), parse_args::get<string>("--patid_fname"));
   D = parse_args::get<int>("--dim");
-  initialize_random_word_vectors();
+
+  bool rand_mode = parse_args::get<bool>("-random");
+  if (rand_mode){
+    // Random initialization
+    initialize_random_word_vectors();
+  }
+  else{
+    // Load from pre-trained file
+    load_word_vectors(parse_args::get<string>("--prefile"));
+  }
+  scaling_word_vectors();
+
   load_matrix(parse_args::get<string>("--matrix_fname"));
   initialize_pattern_reps();
   load_train_instances(parse_args::get<string>("--pos"), 1);
   load_train_instances(parse_args::get<string>("--neg"), -1);
-  train(parse_args::get<int>("--epohs"));
+  train(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"));
   save_word_reps(parse_args::get<string>("--output"));
   return 0;
 }
