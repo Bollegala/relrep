@@ -444,7 +444,7 @@ def batch_process():
     res_file = open("../work/proposed.csv", 'w')
     res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
     methods = ["CosAdd", "CosMult", "CosSub", "PairDiff", "DomFunc"]
-    settings = [("../work/wreps.txt", 100)]
+    settings = [("../work/wreps.txt", 300)]
     for (model, dim) in settings:
         WR = WordReps()
         WR.read_model(model, dim)

@@ -93,7 +93,6 @@ void load_data(string wpid_fname, string patid_fname){
     fprintf(stderr, "No. of patterns = %d\n", (int) patids.size());
 }
 
-
 void initialize_random_word_vectors(){
     // Randomly initialize word vectors
     fprintf(stderr, "Dimensionality of the word vectors = %d\n", D);
@@ -103,8 +102,7 @@ void initialize_random_word_vectors(){
     }    
 }
 
-
-void scaling_word_vectors(){
+void scale_word_vectors(){
     // scale the word vectors at the start of the training
     VectorXd mean = VectorXd::Zero(D);
     VectorXd squared_mean = VectorXd::Zero(D);
@@ -116,9 +114,7 @@ void scaling_word_vectors(){
     VectorXd sd = squared_mean - mean.cwiseProduct(mean);
     for (int i = 0; i < D; ++i){
         sd[i] = sqrt(sd[i]);
-
     }
-
     for (auto w = x.begin(); w != x.end(); ++w){
         VectorXd tmp = VectorXd::Zero(D);
         for (int i = 0; i < D; ++i){
@@ -128,9 +124,7 @@ void scaling_word_vectors(){
         }
         w->second = tmp;
     }
-
 }
-
 
 void load_word_vectors(string vects_fname){
     // Initialize word vectors using pre-trained word vectors
@@ -154,18 +148,25 @@ void load_word_vectors(string vects_fname){
         }
         assert(count == D);
     }
-
 }
 
 void compute_pattern_reps(){
     // Use word representations to compute pattern representations
-    for (int patid = 0; patid < (int) patids.size(); ++patid){
+    VectorXd mean = VectorXd::Zero(D);
+    for (size_t patid = 0; patid < patids.size(); ++patid){
         p[patid] = VectorXd::Zero(D);
-        for (int j = 0; j < (int) R[patid].size(); ++j){
+        for (size_t j = 0; j < R[patid].size(); ++j){
             edge e = R[patid][j];
-            p[patid] += e.weight * (x[e.u] - x[e.v]);
+            p[patid] += (e.weight * (x[e.u] - x[e.v]));
         }
+        p[patid] /= R_totals[patid];
+        mean += p[patid];
     }
+
+    // scaling
+    mean = (1.0 / ((double) patids.size())) * mean;
+    for (size_t patid = 0; patid < patids.size(); ++patid)
+        p[patid] -= mean;
 }
 
 void initialize_pattern_reps(){
@@ -175,13 +176,15 @@ void initialize_pattern_reps(){
         p[patid] = VectorXd::Zero(D);
         fprintf(stderr, "\rPattern %d of %d completed.", patid, (int) patids.size());
         R_totals[patid] = 0;
-        for (int j = 0; j < (int) R[patid].size(); j++){
+        for (size_t j = 0; j < R[patid].size(); ++j){
             edge e = R[patid][j];
-            p[patid] += x[e.u] - x[e.v];
+            p[patid] += (e.weight * (x[e.u] - x[e.v]));
             R_totals[patid] += e.weight;
             H[patid][e.u] += e.weight;
             H[patid][e.v] -= e.weight;
         }
+        p[patid] /= R_totals[patid];
+        p[patid] /= p[patid].norm();
     }
 }
 
@@ -212,6 +215,7 @@ void load_matrix(string matrix_fname){
 
 void load_train_instances(string train_fname, int label){
     // Load and suffle positive and negative train instances
+
     ifstream train_file(train_fname.c_str());
     int p1, p2;
     double sim;
@@ -225,7 +229,6 @@ void load_train_instances(string train_fname, int label){
         }
     train_file.close();
 }
-
 
 void save_word_reps(string fname){
     // write the word representations to a file
@@ -241,7 +244,6 @@ void save_word_reps(string fname){
     reps_file.close();
 }
 
-
 void train(int epohs, double init_alpha){
     // Training 
     fprintf(stderr, "\nTotal no of train instances = %d\n", (int) train_data.size());
@@ -250,9 +252,9 @@ void train(int epohs, double init_alpha){
     // Randomly shuffle train instances
     random_shuffle(train_data.begin(), train_data.end());
     int p1, p2, label, count, update_count;
-    double loss, loss_grad_norm, weight_norm, score, y, y_prime, lmda;
-    double alpha = 1.7159;
-    double beta = 2.0 / 3.0;
+    double loss, loss_grad_norm, weight_norm, score, y, y_prime, lmda, errors;
+    const double alpha = 1.7159;
+    const double beta = 2.0 / 3.0;
 
     // Initialize squared gradient counts for AdaGrad
     for (auto w = x.begin(); w != x.end(); ++w)
@@ -264,25 +266,36 @@ void train(int epohs, double init_alpha){
         weight_norm = 0;
         count = 0;
         update_count = 0;
+        errors = 0;
         for (auto inst = train_data.begin(); inst != train_data.end(); ++inst){
             count += 1;
             p1 = inst->p1;
             p2 = inst->p2;
             label = inst->label;
             score = p[p1].adjoint() * p[p2];
+
             y = tanh(beta * score);
             y_prime = alpha * beta * (1 - (y * y));
-            y = alpha * y;
+            y = alpha * y;            
+
             loss += (y - label) * (y - label);
+
+            if (label * score < 0)
+                errors += 1.0;
+
             lmda = y_prime * (y - label);
 
             // get the candidate words
             set<string> cand_words;
-            for (auto w = H[p1].begin(); w != H[p1].end(); ++w)
+            /*for (auto w = H[p1].begin(); w != H[p1].end(); ++w)
                 cand_words.insert(w->first);
             for (auto w = H[p2].begin(); w != H[p2].end(); ++w)
-                cand_words.insert(w->first);
-            //fprintf(stderr, "%d\n", (int) cand_words.size());
+                cand_words.insert(w->first);*/
+
+            for (auto w = H[p1].begin(); w != H[p1].end(); ++w){
+                if (H[p2].find(w->first) != H[p2].end())
+                    cand_words.insert(w->first);
+            }            
 
             // update word representations
             for (auto w = cand_words.begin(); w != cand_words.end(); ++w){
@@ -292,21 +305,23 @@ void train(int epohs, double init_alpha){
                 s_grad[(*w)] += grad.cwiseProduct(grad);
                 weight_norm += x[(*w)].norm();
                 for (int i = 0; i < D; ++i)
-                    x[(*w)][i] -= (init_alpha * grad[i]) / sqrt(1.0 + s_grad[(*w)][i]);  
-                    //x[(*w)][i] -= grad[i];
-                
+                    x[(*w)][i] -= (init_alpha * grad[i]) / sqrt(1.0 + s_grad[(*w)][i]);                  
             }
-            fprintf(stderr, "\rEpoh = %d: instance = %d, Loss(MSRE) = %f, ||gradLoss|| = %E, ratio = %E, CandWords = %d", 
-                t, count, sqrt(loss / (double) count),  
-                (loss_grad_norm / (double) update_count), (loss_grad_norm / weight_norm),  (int) cand_words.size());
+
+            if ((count % 1000) == 0){
+                //scale_word_vectors();
+                compute_pattern_reps();
+            }
+
+            fprintf(stderr, "\rEpoh = %d: instance = %d, Loss(MSRE) = %f, ||gradLoss|| = %E, ratio = %E, Err = %f, CandWords = %lu", 
+                t, count, sqrt(loss / count),  
+                (loss_grad_norm / update_count), (loss_grad_norm / weight_norm),  (errors / count), cand_words.size());
         }
-        compute_pattern_reps();
-        fprintf(stderr, "%s\nLoss(MSRE) = %f, ||gradLoss|| = %E%s\n", 
-            KYEL, sqrt(loss / (double) count), loss_grad_norm / (double) update_count, KNRM);
+        //compute_pattern_reps();
+        fprintf(stderr, "%s\n Epoh: %d Loss(MSRE) = %f, ||gradLoss|| = %E%s\n", 
+            KYEL, t, sqrt(loss / (double) count), loss_grad_norm / (double) update_count, KNRM);
     }
 }
-
-
 
 
 int main(int argc, char *argv[]) { 
@@ -324,7 +339,7 @@ int main(int argc, char *argv[]) {
   load_data(parse_args::get<string>("--wpid_fname"), parse_args::get<string>("--patid_fname"));
   D = parse_args::get<int>("--dim");
 
-  bool rand_mode = parse_args::get<bool>("-random");
+  bool rand_mode = parse_args::get<bool>("--random");
   if (rand_mode){
     // Random initialization
     initialize_random_word_vectors();
@@ -333,13 +348,15 @@ int main(int argc, char *argv[]) {
     // Load from pre-trained file
     load_word_vectors(parse_args::get<string>("--prefile"));
   }
-  scaling_word_vectors();
+  scale_word_vectors();
 
   load_matrix(parse_args::get<string>("--matrix_fname"));
   initialize_pattern_reps();
+
   load_train_instances(parse_args::get<string>("--pos"), 1);
   load_train_instances(parse_args::get<string>("--neg"), -1);
-  train(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"));
+
+  //train(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"));
   save_word_reps(parse_args::get<string>("--output"));
   return 0;
 }
