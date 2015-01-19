@@ -17,10 +17,7 @@
 #include <stdio.h>
 
 #include <Eigen/Dense>
-
 #include "parse_args.hh"
-#include "dictionary.hh"
-
 #include "omp.h"
 
 #define KNRM  "\x1B[0m"
@@ -57,6 +54,7 @@ unordered_map<int, VectorXd> p; // pattern representations
 unordered_map<int, vector<edge>> R; // Set R(p)
 unordered_map<int, double> R_totals; // /R(p)
 vector<unordered_map<string, double>> H; // H[patid][word] is the differences of values
+unordered_map<string, set<int>> G; // G[word]-> set of pattern ids in which word occurs.
 vector<instance> train_data; // training instances
 
 
@@ -136,7 +134,6 @@ void load_word_vectors(string vects_fname){
         char curword[1024];
         sscanf(buf, "%s %[^\n]", curword, buf);
         string w(curword);
-        //fprintf(stderr, "%s\n", w.c_str());
         x[w] = VectorXd::Zero(D);
         count = 0;
         while (1) {
@@ -155,9 +152,8 @@ void compute_pattern_reps(){
     VectorXd mean = VectorXd::Zero(D);
     for (size_t patid = 0; patid < patids.size(); ++patid){
         p[patid] = VectorXd::Zero(D);
-        for (size_t j = 0; j < R[patid].size(); ++j){
-            edge e = R[patid][j];
-            p[patid] += (e.weight * (x[e.u] - x[e.v]));
+        for (auto e = R[patid].begin(); e != R[patid].end(); ++e){
+            p[patid] += (e->weight * (x[e->u] - x[e->v]));
         }
         p[patid] /= R_totals[patid];
         mean += p[patid];
@@ -173,19 +169,18 @@ void initialize_pattern_reps(){
     // Use word representations to compute pattern representations
     H.resize(patids.size());
     for (int patid = 0; patid < (int) patids.size(); ++patid){
-        p[patid] = VectorXd::Zero(D);
         fprintf(stderr, "\rPattern %d of %d completed.", patid, (int) patids.size());
         R_totals[patid] = 0;
         for (size_t j = 0; j < R[patid].size(); ++j){
             edge e = R[patid][j];
-            p[patid] += (e.weight * (x[e.u] - x[e.v]));
             R_totals[patid] += e.weight;
             H[patid][e.u] += e.weight;
             H[patid][e.v] -= e.weight;
+            G[e.u].insert(patid);
+            G[e.v].insert(patid);
         }
-        p[patid] /= R_totals[patid];
-        p[patid] /= p[patid].norm();
     }
+    compute_pattern_reps();
 }
 
 void load_matrix(string matrix_fname){
@@ -244,7 +239,8 @@ void save_word_reps(string fname){
     reps_file.close();
 }
 
-void train(int epohs, double init_alpha){
+
+void train_tanh(int epohs, double init_alpha){
     // Training 
     fprintf(stderr, "\nTotal no of train instances = %d\n", (int) train_data.size());
     fprintf(stderr, "Total ephos to train = %d\n", epohs);
@@ -272,26 +268,20 @@ void train(int epohs, double init_alpha){
             p1 = inst->p1;
             p2 = inst->p2;
             label = inst->label;
-            score = p[p1].adjoint() * p[p2];
 
+            //tanh loss
+            score = p[p1].adjoint() * p[p2];
             y = tanh(beta * score);
             y_prime = alpha * beta * (1 - (y * y));
-            y = alpha * y;            
-
+            y = alpha * y;
             loss += (y - label) * (y - label);
-
             if (label * score < 0)
                 errors += 1.0;
-
             lmda = y_prime * (y - label);
+
 
             // get the candidate words
             set<string> cand_words;
-            /*for (auto w = H[p1].begin(); w != H[p1].end(); ++w)
-                cand_words.insert(w->first);
-            for (auto w = H[p2].begin(); w != H[p2].end(); ++w)
-                cand_words.insert(w->first);*/
-
             for (auto w = H[p1].begin(); w != H[p1].end(); ++w){
                 if (H[p2].find(w->first) != H[p2].end())
                     cand_words.insert(w->first);
@@ -320,6 +310,85 @@ void train(int epohs, double init_alpha){
         //compute_pattern_reps();
         fprintf(stderr, "%s\n Epoh: %d Loss(MSRE) = %f, ||gradLoss|| = %E%s\n", 
             KYEL, t, sqrt(loss / (double) count), loss_grad_norm / (double) update_count, KNRM);
+    }
+}
+
+
+
+void train(int epohs, double init_alpha){
+    // Training 
+    fprintf(stderr, "\nTotal no of train instances = %d\n", (int) train_data.size());
+    fprintf(stderr, "Total ephos to train = %d\n", epohs);
+    fprintf(stderr, "Initial learning rate = %f\n", init_alpha);
+    // Randomly shuffle train instances
+    random_shuffle(train_data.begin(), train_data.end());
+    int p1, p2, label, count, update_count;
+    double loss, loss_grad_norm, weight_norm, score, errors;
+    set<int> update_patterns;
+
+    // Initialize squared gradient counts for AdaGrad
+    for (auto w = x.begin(); w != x.end(); ++w)
+        s_grad[w->first] = VectorXd::Zero(D);
+
+    for (int t = 0; t < epohs; ++t){
+        loss = 0;
+        loss_grad_norm = 0;
+        weight_norm = 0;
+        count = 0;
+        update_count = 0;
+        errors = 0;
+        for (auto inst = train_data.begin(); inst != train_data.end(); ++inst){
+            count += 1;
+            p1 = inst->p1;
+            p2 = inst->p2;
+            label = inst->label;
+
+            // update pattern representations
+            if (update_patterns.count(p1)){
+                for (auto e = R[p1].begin(); e != R[p1].end(); ++e)
+                    p[p1] += (e->weight * (x[e->u] - x[e->v]));        
+                p[p1] /= R_totals[p1];
+                update_patterns.erase(p1);
+            }
+
+            if (update_patterns.count(p2)){
+                for (auto e = R[p2].begin(); e != R[p2].end(); ++e)
+                    p[p2] += (e->weight * (x[e->u] - x[e->v]));        
+                p[p2] /= R_totals[p1];
+                update_patterns.erase(p2);
+            }
+
+            score = 1.0 - label * p[p1].adjoint() * p[p2];
+            if (score > 1.0){
+                //cout <<label << "\t" << score << "\t" << p[p1].adjoint() * p[p2] <<endl ;
+                errors += 1;        
+                // get the candidate words
+                set<string> cand_words;
+                for (auto w = H[p1].begin(); w != H[p1].end(); ++w){
+                    if (H[p2].find(w->first) != H[p2].end())
+                        cand_words.insert(w->first);
+                }
+                // update word representations
+                for (auto w = cand_words.begin(); w != cand_words.end(); ++w){
+                    VectorXd grad = -label * (((H[p1][(*w)] / R_totals[p1]) * p[p2]) - ((H[p2][(*w)] / R_totals[p2]) * p[p1]));
+                    loss_grad_norm += grad.norm();
+                    update_count += 1;
+                    s_grad[(*w)] += grad.cwiseProduct(grad);
+                    weight_norm += x[(*w)].norm();
+                    for (int i = 0; i < D; ++i)
+                        x[(*w)][i] -= (init_alpha * grad[i]) / sqrt(1.0 + s_grad[(*w)][i]);    
+
+                    // pattern representations that must be updated.      
+                    for (auto patid = G[(*w)].begin(); patid != G[(*w)].end(); ++patid)
+                        update_patterns.insert((*patid));
+
+                }
+            }
+            fprintf(stderr, "\rEpoh = %d: instance = %d, score = %f, ||gradLoss|| = %E, ratio = %E, Err = %f", 
+                t, count, score,  (loss_grad_norm / update_count), (loss_grad_norm / weight_norm), (errors / count));
+        }
+        fprintf(stderr, "%s\n Epoh: %d ||gradLoss|| = %E Err　=　%f%s\n", 
+            KYEL, t, loss_grad_norm / (double) update_count, (errors / count), KNRM);
     }
 }
 
@@ -356,7 +425,7 @@ int main(int argc, char *argv[]) {
   load_train_instances(parse_args::get<string>("--pos"), 1);
   load_train_instances(parse_args::get<string>("--neg"), -1);
 
-  //train(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"));
+  train(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"));
   save_word_reps(parse_args::get<string>("--output"));
   return 0;
 }
