@@ -227,6 +227,7 @@ void load_train_instances(string train_fname, int label){
 
 void save_word_reps(string fname){
     // write the word representations to a file
+    cout << fname << endl;
     ofstream reps_file;
     reps_file.open(fname);
     for (auto w = x.begin(); w != x.end(); ++w){
@@ -240,9 +241,9 @@ void save_word_reps(string fname){
 }
 
 
-void train_tanh(int epohs, double init_alpha){
+void train_tanh(int epohs, double init_alpha, string fpath){
     // Training 
-    fprintf(stderr, "\nTotal no of train instances = %d\n", (int) train_data.size());
+    fprintf(stderr, "\n[TANH] Total no of train instances = %d\n", (int) train_data.size());
     fprintf(stderr, "Total ephos to train = %d\n", epohs);
     fprintf(stderr, "Initial learning rate = %f\n", init_alpha);
     // Randomly shuffle train instances
@@ -269,6 +270,16 @@ void train_tanh(int epohs, double init_alpha){
             p2 = inst->p2;
             label = inst->label;
 
+             for (auto e = R[p1].begin(); e != R[p1].end(); ++e)
+                p[p1] += (e->weight * (x[e->u] - x[e->v]));        
+            //p[p1] /= R_totals[p1];
+            p[p1] /= p[p1].norm();
+              
+            for (auto e = R[p2].begin(); e != R[p2].end(); ++e)
+                p[p2] += (e->weight * (x[e->u] - x[e->v]));        
+            //p[p2] /= R_totals[p1];
+            p[p2] /= p[p2].norm();
+
             //tanh loss
             score = p[p1].adjoint() * p[p2];
             y = tanh(beta * score);
@@ -278,6 +289,8 @@ void train_tanh(int epohs, double init_alpha){
             if (label * score < 0)
                 errors += 1.0;
             lmda = y_prime * (y - label);
+
+            // recLU
 
 
             // get the candidate words
@@ -298,40 +311,37 @@ void train_tanh(int epohs, double init_alpha){
                     x[(*w)][i] -= (init_alpha * grad[i]) / sqrt(1.0 + s_grad[(*w)][i]);                  
             }
 
-            if ((count % 1000) == 0){
-                //scale_word_vectors();
-                compute_pattern_reps();
-            }
 
-            fprintf(stderr, "\rEpoh = %d: instance = %d, Loss(MSRE) = %f, ||gradLoss|| = %E, ratio = %E, Err = %f, CandWords = %lu", 
+            fprintf(stderr, "\rEpoh = %d: instance = %d, Loss(MSRE) = %f, ||gradLoss|| = %E, ratio = %E, Err = %f, score = %f", 
                 t, count, sqrt(loss / count),  
-                (loss_grad_norm / update_count), (loss_grad_norm / weight_norm),  (errors / count), cand_words.size());
+                (loss_grad_norm / update_count), (loss_grad_norm / weight_norm),  (errors / count), y);
         }
-        //compute_pattern_reps();
+    
         fprintf(stderr, "%s\n Epoh: %d Loss(MSRE) = %f, ||gradLoss|| = %E%s\n", 
             KYEL, t, sqrt(loss / (double) count), loss_grad_norm / (double) update_count, KNRM);
+        // save current model
+        string fname = fpath + to_string(t) + "_wordreps.txt";
+        save_word_reps(fname);
     }
 }
 
 
 
-void train(int epohs, double init_alpha){
+void train_hinge(int epohs, double init_alpha, string fpath){
     // Training 
-    fprintf(stderr, "\nTotal no of train instances = %d\n", (int) train_data.size());
+    fprintf(stderr, "\n[HINGE] Total no of train instances = %d\n", (int) train_data.size());
     fprintf(stderr, "Total ephos to train = %d\n", epohs);
     fprintf(stderr, "Initial learning rate = %f\n", init_alpha);
     // Randomly shuffle train instances
     random_shuffle(train_data.begin(), train_data.end());
     int p1, p2, label, count, update_count;
-    double loss, loss_grad_norm, weight_norm, score, errors;
-    set<int> update_patterns;
+    double loss_grad_norm, weight_norm, score, errors;
 
     // Initialize squared gradient counts for AdaGrad
     for (auto w = x.begin(); w != x.end(); ++w)
         s_grad[w->first] = VectorXd::Zero(D);
 
     for (int t = 0; t < epohs; ++t){
-        loss = 0;
         loss_grad_norm = 0;
         weight_norm = 0;
         count = 0;
@@ -344,19 +354,15 @@ void train(int epohs, double init_alpha){
             label = inst->label;
 
             // update pattern representations
-            if (update_patterns.count(p1)){
-                for (auto e = R[p1].begin(); e != R[p1].end(); ++e)
-                    p[p1] += (e->weight * (x[e->u] - x[e->v]));        
-                p[p1] /= R_totals[p1];
-                update_patterns.erase(p1);
+            for (auto e = R[p1].begin(); e != R[p1].end(); ++e){
+                p[p1] += (e->weight * (x[e->u] - x[e->v]));        
             }
-
-            if (update_patterns.count(p2)){
-                for (auto e = R[p2].begin(); e != R[p2].end(); ++e)
-                    p[p2] += (e->weight * (x[e->u] - x[e->v]));        
-                p[p2] /= R_totals[p1];
-                update_patterns.erase(p2);
+            p[p1] /= R_totals[p1];            
+            for (auto e = R[p2].begin(); e != R[p2].end(); ++e){
+                p[p2] += (e->weight * (x[e->u] - x[e->v]));        
             }
+            p[p2] /= R_totals[p1];
+    
 
             score = 1.0 - label * p[p1].adjoint() * p[p2];
             if (score > 1.0){
@@ -370,25 +376,23 @@ void train(int epohs, double init_alpha){
                 }
                 // update word representations
                 for (auto w = cand_words.begin(); w != cand_words.end(); ++w){
-                    VectorXd grad = -label * (((H[p1][(*w)] / R_totals[p1]) * p[p2]) - ((H[p2][(*w)] / R_totals[p2]) * p[p1]));
+                    VectorXd grad = -label * (((H[p1][(*w)] / R_totals[p1]) * p[p2]) + ((H[p2][(*w)] / R_totals[p2]) * p[p1]));
                     loss_grad_norm += grad.norm();
                     update_count += 1;
                     s_grad[(*w)] += grad.cwiseProduct(grad);
                     weight_norm += x[(*w)].norm();
                     for (int i = 0; i < D; ++i)
                         x[(*w)][i] -= (init_alpha * grad[i]) / sqrt(1.0 + s_grad[(*w)][i]);    
-
-                    // pattern representations that must be updated.      
-                    for (auto patid = G[(*w)].begin(); patid != G[(*w)].end(); ++patid)
-                        update_patterns.insert((*patid));
-
                 }
             }
             fprintf(stderr, "\rEpoh = %d: instance = %d, score = %f, ||gradLoss|| = %E, ratio = %E, Err = %f", 
                 t, count, score,  (loss_grad_norm / update_count), (loss_grad_norm / weight_norm), (errors / count));
         }
-        fprintf(stderr, "%s\n Epoh: %d ||gradLoss|| = %E Err　=　%f%s\n", 
+        fprintf(stderr, "%s\n Epoh: %d ||gradLoss|| = %E,   Err =　%f%s\n", 
             KYEL, t, loss_grad_norm / (double) update_count, (errors / count), KNRM);
+        // save current model
+        string fname = fpath + to_string(t) + "_wordreps.txt";
+        save_word_reps(fname);
     }
 }
 
@@ -425,7 +429,13 @@ int main(int argc, char *argv[]) {
   load_train_instances(parse_args::get<string>("--pos"), 1);
   load_train_instances(parse_args::get<string>("--neg"), -1);
 
-  train(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"));
-  save_word_reps(parse_args::get<string>("--output"));
+  string loss = parse_args::get<string>("--loss");
+  if (loss == "hinge"){
+    train_hinge(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"), parse_args::get<string>("--output"));
+  }
+  else if (loss == "tanh"){
+    train_tanh(parse_args::get<int>("--epohs"), parse_args::get<double>("--alpha"), parse_args::get<string>("--output"));
+  }
+  
   return 0;
 }

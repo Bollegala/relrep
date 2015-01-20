@@ -389,6 +389,42 @@ def process():
     pass
 
 
+def select_pretrained_reps():
+    """
+    Select pre-trained word vectors for the words in the words in word pairs.
+    Write thoese vectors to a file. We will use this file to initialize train.cpp 
+    """
+    wpid_fname = "../work/benchmark.wpids"
+    output_fname = "../work/glove840B.pretrained"
+    D = 300
+    pretrained_fname = "../data/word-vects/glove.840B.300d.txt"
+    WR = WordReps()
+    print "Model file name =", pretrained_fname
+    WR.read_model(pretrained_fname, D)
+    print "Loading done"
+    vocab = set()
+    with open(wpid_fname) as wpid_file:
+        for line in wpid_file:
+            p = line.strip().split()
+            vocab.add(p[1].strip())
+            vocab.add(p[2].strip())
+
+    with open("../work/benchmark-vocabulary.txt") as bench_file:
+        for line in bench_file:
+            vocab.add(line.strip().split('\t')[0])
+
+    print "Vocab size =", len(vocab)
+
+    with open(output_fname, 'w') as F:
+        for w in vocab:
+            x = WR.vects.get(w, numpy.zeros(D, dtype=numpy.float64))
+            F.write("%s " % w)
+            for i in range(0, D):
+                F.write("%f " % x[i])
+            F.write("\n")
+    pass
+
+
 def batch_process_glove():
     res_file = open("../work/glove_batch.csv", 'w')
     res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
@@ -440,11 +476,11 @@ def batch_process_w2v():
     pass
 
 
-def batch_process():
+def batch_process(fname, dim):
     res_file = open("../work/proposed.csv", 'w')
     res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
     methods = ["CosAdd", "CosMult", "CosSub", "PairDiff", "DomFunc"]
-    settings = [("../work/glove.pretrained", 300)]
+    settings = [(fname, dim)]
     for (model, dim) in settings:
         WR = WordReps()
         WR.read_model(model, dim)
@@ -465,45 +501,9 @@ def batch_process():
     pass
 
 
-def select_pretrained_reps():
-    """
-    Select pre-trained word vectors for the words in the words in word pairs.
-    Write thoese vectors to a file. We will use this file to initialize train.cpp 
-    """
-    wpid_fname = "../work/benchmark.wpids"
-    output_fname = "../work/glove.pretrained"
-    D = 300
-    pretrained_fname = "../data/word-vects/glove.42B.300d.txt"
-    WR = WordReps()
-    print "Model file name =", pretrained_fname
-    WR.read_model(pretrained_fname, D)
-    print "Loading done"
-    vocab = set()
-    with open(wpid_fname) as wpid_file:
-        for line in wpid_file:
-            p = line.strip().split()
-            vocab.add(p[1].strip())
-            vocab.add(p[2].strip())
-
-    with open("../work/benchmark-vocabulary.txt") as bench_file:
-        for line in bench_file:
-            vocab.add(line.strip().split('\t')[0])
-
-    print "Vocab size =", len(vocab)
-
-    with open(output_fname, 'w') as F:
-        for w in vocab:
-            x = WR.vects.get(w, numpy.zeros(D, dtype=numpy.float64))
-            F.write("%s " % w)
-            for i in range(0, D):
-                F.write("%f " % x[i])
-            F.write("\n")
-    pass
-
-
 if __name__ == "__main__":
     #process()
     #batch_process_w2v()
     #batch_process_glove()
-    batch_process()
+    batch_process(sys.argv[1].strip(), int(sys.argv[2]))
     #select_pretrained_reps()
