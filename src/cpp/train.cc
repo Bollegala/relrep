@@ -290,9 +290,6 @@ void train_tanh(int epohs, double init_alpha, string fpath){
                 errors += 1.0;
             lmda = y_prime * (y - label);
 
-            // recLU
-
-
             // get the candidate words
             set<string> cand_words;
             for (auto w = H[p1].begin(); w != H[p1].end(); ++w){
@@ -320,7 +317,7 @@ void train_tanh(int epohs, double init_alpha, string fpath){
         fprintf(stderr, "%s\n Epoh: %d Loss(MSRE) = %f, ||gradLoss|| = %E%s\n", 
             KYEL, t, sqrt(loss / (double) count), loss_grad_norm / (double) update_count, KNRM);
         // save current model
-        string fname = fpath + to_string(t) + "_wordreps.txt";
+        string fname = fpath + "/" + to_string(t) + "_wordreps.txt";
         save_word_reps(fname);
     }
 }
@@ -357,11 +354,12 @@ void train_hinge(int epohs, double init_alpha, string fpath){
             for (auto e = R[p1].begin(); e != R[p1].end(); ++e){
                 p[p1] += (e->weight * (x[e->u] - x[e->v]));        
             }
-            p[p1] /= R_totals[p1];            
+            p[p1] /= p[p1].norm(); 
+
             for (auto e = R[p2].begin(); e != R[p2].end(); ++e){
                 p[p2] += (e->weight * (x[e->u] - x[e->v]));        
             }
-            p[p2] /= R_totals[p1];
+            p[p2] /= p[p2].norm();
     
 
             score = 1.0 - label * p[p1].adjoint() * p[p2];
@@ -391,7 +389,7 @@ void train_hinge(int epohs, double init_alpha, string fpath){
         fprintf(stderr, "%s\n Epoh: %d ||gradLoss|| = %E,   Err =　%f%s\n", 
             KYEL, t, loss_grad_norm / (double) update_count, (errors / count), KNRM);
         // save current model
-        string fname = fpath + to_string(t) + "_wordreps.txt";
+        string fname = fpath + "/" + to_string(t) + "_wordreps.txt";
         save_word_reps(fname);
     }
 }
