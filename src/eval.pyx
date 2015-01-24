@@ -135,6 +135,7 @@ def eval_SemEval(vects, method):
     from semeval import SemEval
     S = SemEval("../data/benchmarks/semeval")
     total_accuracy = 0
+    print "Total no. of instances in SemEval =", len(S.data)
     for Q in S.data:
         scores = []
         for (first, second) in Q["wpairs"]:
