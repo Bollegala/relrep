@@ -60,7 +60,35 @@ class WordReps:
         pass
 
 
-    def read_w2v_model(self, fname):
+    def read_w2v_model_text(self, fname, dim):
+        """
+        Read the word vectors where the first token is the word.
+        """
+        F = open(fname)
+        R = dim
+        # read the vectors.
+        vects = {}
+        vocab = []
+        line = F.readline()  # vocab size and dimensionality 
+        assert(int(line.split()[1]) == R)
+        line = F.readline()
+        while len(line) != 0:
+            p = line.split()
+            word = p[0]
+            v = numpy.zeros(R, float)
+            for i in range(0, R):
+                v[i] = float(p[i+1])
+            vects[word] = normalize(v)
+            vocab.append(word)
+            line = F.readline()
+        F.close()
+        self.vocab = vocab
+        self.vects = vects
+        self.vector_size = R
+        pass
+
+
+    def read_w2v_model_binary(self, fname, dim):
         """
         Given a model file (fname) produced by word2vect, read the vocabulary list 
         and the vectors for each word. We will return a dictionary of the form
@@ -73,6 +101,7 @@ class WordReps:
         vects = {}
         print "Vocabulary size =", vocab_size
         print "Vector size =", vector_size
+        assert(dim == vector_size)
         binary_len = numpy.dtype(numpy.float32).itemsize * vector_size
         for line_number in xrange(vocab_size):
             # mixed text and binary: read text first, then binary
@@ -382,17 +411,18 @@ def process():
     pass
 
 
-def select_pretrained_reps():
+def select_pretrained_reps(D):
     """
     Select pre-trained word vectors for the words in the words in word pairs.
     Write thoese vectors to a file. We will use this file to initialize train.cpp 
     """
     wpid_fname = "../work/benchmark.wpids"
-    output_fname = "../work/glove840B.pretrained"
-    D = 300
-    pretrained_fname = "../data/word-vects/glove.840B.300d.txt"
+    output_fname = "../work/glove%d.pretrained" % D
+    pretrained_fname = "../glove/glove%d.txt" % D
     WR = WordReps()
     print "Model file name =", pretrained_fname
+    #WR.read_w2v_model_text(pretrained_fname, D)
+    #WR.read_w2v_model_binary(pretrained_fname)
     WR.read_model(pretrained_fname, D)
     print "Loading done"
     vocab = set()
@@ -419,10 +449,13 @@ def select_pretrained_reps():
 
 
 def batch_process_glove():
-    res_file = open("../work/glove_batch.csv", 'w')
+    res_file = open("../work/hlbl.csv", 'w')
     res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
     methods = ["CosAdd", "CosMult", "CosSub", "PairDiff", "DomFunc"]
-    settings = [("../data/word-vects/glove.42B.300d.txt", 300), ("../data/word-vects/glove.840B.300d.txt", 300)]
+    D = 200
+    settings = [("../data/embeddings-scaled.EMBEDDING_SIZE=200.txt", 200)]
+    #settings = [("../data/word-vects/glove.42B.300d.txt", 300), ("../data/word-vects/glove.840B.300d.txt", 300)]
+    #settings = [("../glove/glove%d.txt" % D, D)]
     for (model, dim) in settings:
         WR = WordReps()
         WR.read_model(model, dim)
@@ -430,7 +463,7 @@ def batch_process_glove():
             print model, dim, method
             res_file.write("%s+%s, " % (model, method))
             res_file.flush()
-            Google_res = eval_Google_Analogies(WR.vects, "../work/Google.csv", method)
+            Google_res = eval_Google_Analogies(WR.vects, method)
             res_file.write("%f, %f, %f, " % (Google_res["semantic"], Google_res["syntactic"], Google_res["total"]))
             res_file.flush()
             SAT_res = eval_SAT_Analogies(WR.vects, method)
@@ -444,19 +477,18 @@ def batch_process_glove():
 
 
 def batch_process_w2v():
-    res_file = open("../work/w2v_batch.csv", 'w')
+    res_file = open("../work/cbow_batch.csv", 'w')
     res_file.write("# Method, semantic, syntactic, all, SAT, SemEval\n")
     methods = ["CosAdd", "CosMult", "CosSub", "PairDiff", "DomFunc"]
-    settings = [("../data/word-vects/skip-100.bin", 100), ("../data/word-vects/skip-200.bin", 200),
-            ("../data/word-vects/skip-300.bin", 300), ("../data/word-vects/w2v.neg.300d.bin", 300)]
+    settings = [("../data/word-vects/freebase-skip.1000", 1000)]
     for (model, dim) in settings:
         WR = WordReps()
-        WR.read_w2v_model(model)
+        WR.read_w2v_model_binary(model, dim)
         for method in methods:
             print model, dim, method
             res_file.write("%s+%s, " % (model, method))
             res_file.flush()
-            Google_res = eval_Google_Analogies(WR.vects, "../work/Google.csv", method)
+            Google_res = eval_Google_Analogies(WR.vects, method)
             res_file.write("%f, %f, %f, " % (Google_res["semantic"], Google_res["syntactic"], Google_res["total"]))
             res_file.flush()
             SAT_res = eval_SAT_Analogies(WR.vects, method)
@@ -500,10 +532,10 @@ def batch_epochs(path):
     """
     res_file = open("../work/batch-epochs.csv", 'w')
     WR = WordReps()
-    method = "CosAdd"
+    method = "CosMult"
     res_file.write("Method = %s\n" % method)
     res_file.write("Epoch, semantic, syntactic, total, SAT, SemEval\n")
-    for t in range(0, 50):
+    for t in range(0, 20):
         WR.read_model("%s/%d_wordreps.txt" % (path, t), 300)
         print t, method
         res_file.write("%d, " % t)
@@ -520,7 +552,8 @@ def batch_epochs(path):
 if __name__ == "__main__":
     #process()
     #batch_process_w2v()
-    #batch_process_glove()
-    batch_process(sys.argv[1].strip(), int(sys.argv[2]))
+    batch_process_glove()
+    #select_pretrained_reps(D)
+    #batch_process(sys.argv[1].strip(), int(sys.argv[2]))
     #batch_epochs(sys.argv[1].strip())
-    #select_pretrained_reps()
+   
